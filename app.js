@@ -2,7 +2,7 @@
 const plan = window.SHOOT_PLAN;
 const main = document.querySelector('main');
 const viewer = document.querySelector('#viewer');
-const storageKey = 'yumegram-shoot-0711-checklist-v1';
+const syncStatus = document.querySelector('#sync-status');
 const videos = new Map(plan.videos.map(video => [video.id, video]));
 const shoot = plan.videos.filter(video => video.category === 'shoot');
 const edit = plan.videos.filter(video => video.category === 'edit');
@@ -15,8 +15,6 @@ const link = (href, label, type = '') => '<a class="btn '+ type +'" href="' + es
 const external = (href, label) => '<a class="btn" href="' + escape(href) + '" target="_blank" rel="noopener">' + escape(label) + ' ↗</a>';
 const route = (id, tab = 'frames') => '#/video/' + id + '/' + tab;
 const countVisuals = video => video.frames.reduce((total, frame) => total + frame.visuals.length, 0);
-let checked = new Set();
-try { checked = new Set(JSON.parse(localStorage.getItem(storageKey) || '[]')); } catch {}
 let propFilter = 'all';
 let spoilerOrder = false;
 document.querySelector('#source-sheet').href = plan.sheet;
@@ -29,6 +27,35 @@ const universalChecks = [
   'Просмотреть тестовый дубль на телефоне: глаза резкие, кисти и нужный реквизит в рамке, вверху и внизу есть место для графики.',
   'Отметить удачный дубль по каждому плану. Перед перестановкой сохранить фото расположения реквизита и проверить склейку.',
 ];
+
+const checklistKeys = new Set(universalChecks.map((_, i) => 'universal-' + i));
+for (const key of [...Object.keys(plan.props), ...plan.shared.map(([key]) => key)]) checklistKeys.add('prop-' + key);
+for (const video of plan.videos) {
+  video.checks.forEach((_, i) => checklistKeys.add((video.checkKey || video.id) + '-check-' + i));
+  video.frames.forEach((frame, i) => {
+    checklistKeys.add(video.id + '-scene-' + i);
+    if (frame.visuals.length > 1) frame.visuals.forEach((_, j) => checklistKeys.add(video.id + '-visual-' + i + '-' + j));
+  });
+}
+const sync = window.createChecklistSync(checklistKeys, updateChecklist);
+let checked = sync.current();
+
+function updateChecklist(next, status, pending) {
+  checked = next;
+  const message = status === 'offline'
+    ? 'Общие отметки недоступны. Изменения сохранены в этом браузере.'
+    : pending ? 'Сохраняем общие отметки…'
+    : status === 'synced' ? 'Общие отметки синхронизированы' : 'Подключаем общие отметки…';
+  syncStatus.dataset.state = pending && status !== 'offline' ? 'connecting' : status;
+  if (syncStatus.textContent !== message) syncStatus.textContent = message;
+  for (const input of main.querySelectorAll('[data-check]')) input.checked = checked.has(input.dataset.check);
+  for (const indicator of main.querySelectorAll('[data-progress]')) {
+    const keys = indicator.dataset.progress.split(' ').filter(Boolean);
+    const value = keys.filter(key => checked.has(key)).length + (indicator.dataset.compact ? '/' : ' / ') + keys.length;
+    const count = indicator.querySelector('strong');
+    if (count.textContent !== value) count.textContent = value;
+  }
+}
 
 function checkbox(key, label) {
   return '<label class="checkbox"><input type="checkbox" data-check="' + escape(key) + '"' + (checked.has(key) ? ' checked' : '') + '><span>' + escape(label) + '</span></label>';
@@ -51,9 +78,10 @@ function videoCard(video) {
   const index = plan.videos.indexOf(video) + 1;
   const cover = {tifa:0, interview:0, tier:3, photo:1, spoiler:1, night:0}[video.id] ?? 0;
   const image = video.frames[cover].visuals[0].src;
-  const completed = video.frames.filter((_, i) => checked.has(video.id + '-scene-' + i)).length;
+  const keys = video.frames.map((_, i) => video.id + '-scene-' + i);
+  const completed = keys.filter(key => checked.has(key)).length;
   return '<a class="video-card" href="' + route(video.id) + '">' + picture(image, '') +
-    '<div><small class="index">' + pad(index) + ' · ' + video.duration + '</small><h3>' + escape(video.title) + '</h3><span class="mono">' + frameCount(video.frames.length) + ' · ' + completed + '/' + video.frames.length + ' ✓</span></div></a>';
+    '<div><small class="index">' + pad(index) + ' · ' + video.duration + '</small><h3>' + escape(video.title) + '</h3><span class="mono" data-progress="' + keys.join(' ') + '" data-compact="true">' + frameCount(video.frames.length) + ' · <strong>' + completed + '/' + video.frames.length + '</strong> ✓</span></div></a>';
 }
 function home() {
   const total = plan.videos.reduce((n, v) => n + countVisuals(v), 0);
@@ -63,7 +91,7 @@ function home() {
     ['tier-06','03 / ТИР-ЛИСТ'],
   ].map(([src, label]) => '<figure>' + picture('assets/frames/' + src + '.webp', '', true) + '<figcaption>' + label + '</figcaption></figure>').join('');
   return '<div class="shell"><section class="hero"><div><div class="eyebrow">Продакшн · Съёмочная смена</div><h1>Съёмка<br><span>07.11</span></h1><p class="intro">Сценарии, постановка кадра и чек-листы для команды YumeGram. Откройте ролик, сверьте свет и реквизит и отметьте готовые сцены.</p><div class="actions">' + link('#/list', 'К списку роликов ↓', 'primary') + link('#/props', 'Реквизит и печать') + '</div></div><div class="hero-film" aria-hidden="true">' + hero + '</div></section>' +
-    '<div class="stats"><div class="stat"><strong>' + shoot.length + '</strong><span>съёмок в комнате</span></div><div class="stat"><strong>' + edit.length + '</strong><span>ролика на монтаж</span></div><div class="stat"><strong>' + total + '</strong><span>визуалов</span></div></div>' +
+    '<div class="stats"><div class="stat"><strong>' + shoot.length + '</strong><span>съёмок в комнате</span></div><div class="stat"><strong>' + edit.length + '</strong><span>' + formatCount(edit.length, ['ролик','ролика','роликов']).replace(/^\d+ /, '') + ' на монтаж</span></div><div class="stat"><strong>' + total + '</strong><span>визуалов</span></div></div>' +
     '<section id="video-list" class="section"><div class="section-head"><div><h2>Снимаем в комнате</h2><p>Планы, реплики и проверка каждого дубля.</p></div>' + link('#/setup', 'Чек-лист смены') + '</div><div class="video-grid">' + shoot.map(videoCard).join('') + '</div></section>' +
     '<section class="section"><div class="section-head"><div><h2>Только монтаж</h2><p>Архив, графика и раскадровка для монтажёра.</p></div></div><div class="video-grid">' + edit.map(videoCard).join('') + '</div></section></div>';
 }
@@ -154,13 +182,14 @@ function videoPage(video, tab) {
   let content;
   if (tab === 'check') {
     content = '<h2>' + (video.category === 'shoot' ? 'Перед съёмкой' : 'Перед монтажом') + '</h2>' +
-      checks(video.id + '-check', video.checks) + (video.category === 'shoot' ? link('#/setup', 'Общий чек-лист света и камеры') : '') +
+      checks((video.checkKey || video.id) + '-check', video.checks) + (video.category === 'shoot' ? link('#/setup', 'Общий чек-лист света и камеры') : '') +
       link(route(video.id, 'frames'), 'К раскадровке');
   } else if (tab === 'props') {
     content = propsContent(video) + link('#/props','Весь реквизит');
   } else if (tab === 'script') {
-    content = '<section class="script-wrap"><h2>Текст сценария</h2><p class="muted">Версия со страницы 07.11. Световые указания на сайте приведены к схеме смены.</p>' +
-      external(video.url, 'Исходный Google Doc') + '<div class="script-text">' + escape(video.script) + '</div></section>';
+    const source = video.adapted ? '<p class="muted">Версия для генерации и монтажа.</p>'
+      : '<p class="muted">Версия со страницы 07.11. Световые указания на сайте приведены к схеме смены.</p>' + external(video.url, 'Исходный Google Doc');
+    content = '<section class="script-wrap"><h2>Текст сценария</h2>' + source + '<div class="script-text">' + escape(video.script) + '</div></section>';
   } else {
     tab = 'frames';
     content = storyboard(video);
@@ -194,12 +223,7 @@ main.addEventListener('change', event => {
   }
   const input = event.target.closest('[data-check]');
   if (!input) return;
-  if (input.checked) checked.add(input.dataset.check); else checked.delete(input.dataset.check);
-  try { localStorage.setItem(storageKey, JSON.stringify([...checked])); } catch {}
-  for (const indicator of main.querySelectorAll('[data-progress]')) {
-    const keys = indicator.dataset.progress.split(' ').filter(Boolean);
-    indicator.querySelector('strong').textContent = keys.filter(key => checked.has(key)).length + ' / ' + keys.length;
-  }
+  sync.set(input.dataset.check, input.checked);
 });
 main.addEventListener('click', event => {
   const control = event.target.closest('button');
@@ -225,3 +249,4 @@ viewer.addEventListener('click', event => { if (event.target === viewer) viewer.
 window.addEventListener('hashchange', () => render());
 document.querySelector('.skip').addEventListener('click', event => { event.preventDefault(); main.focus(); });
 render();
+sync.start();
