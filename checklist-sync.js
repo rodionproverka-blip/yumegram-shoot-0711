@@ -1,9 +1,10 @@
 'use strict';
 
 window.createChecklistSync = function createChecklistSync(keys, onUpdate) {
+  const preview = ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname);
   const endpoint = 'https://yumegram-shoot-0711-checklists.rodionproverka393682.chatgpt.site/api/checklists';
   const legacyKey = 'yumegram-shoot-0711-checklist-v1';
-  const cacheKey = 'yumegram-shoot-0711-shared-v2';
+  const cacheKey = preview ? 'yumegram-shoot-0711-preview' : 'yumegram-shoot-0711-shared-v2';
   const importedKey = cacheKey + '-imported';
   const opPrefix = cacheKey + '-op-';
   const memoryOps = new Map();
@@ -11,7 +12,7 @@ window.createChecklistSync = function createChecklistSync(keys, onUpdate) {
   let cache = read(cacheKey, {revision: -1, checked: []});
   let running = false;
   let lastTime = 0;
-  let status = 'connecting';
+  let status = preview ? 'preview' : 'connecting';
 
   function read(key, fallback) {
     try { return JSON.parse(localStorage.getItem(key)) ?? fallback; }
@@ -35,6 +36,7 @@ window.createChecklistSync = function createChecklistSync(keys, onUpdate) {
     return [...ops.values()].sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
   }
   function legacyToImport() {
+    if (preview) return [];
     for (const key of read(importedKey, [])) imported.add(key);
     return read(legacyKey, []).filter(key => keys.has(key) && !imported.has(key));
   }
@@ -54,7 +56,7 @@ window.createChecklistSync = function createChecklistSync(keys, onUpdate) {
     if (stored.revision > cache.revision) cache = stored;
   }
   async function sync() {
-    if (running) return;
+    if (preview || running) return;
     running = true;
     const legacy = legacyToImport();
     const edits = pending().slice(0, 100);

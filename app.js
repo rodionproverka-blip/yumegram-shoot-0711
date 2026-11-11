@@ -33,8 +33,8 @@ for (const key of [...Object.keys(plan.props), ...plan.shared.map(([key]) => key
 for (const video of plan.videos) {
   video.checks.forEach((_, i) => checklistKeys.add((video.checkKey || video.id) + '-check-' + i));
   video.frames.forEach((frame, i) => {
-    checklistKeys.add(video.id + '-scene-' + i);
-    if (frame.visuals.length > 1) frame.visuals.forEach((_, j) => checklistKeys.add(video.id + '-visual-' + i + '-' + j));
+    checklistKeys.add(video.id + '-scene-' + (frame.checkIndex ?? i));
+    if (frame.visuals.length > 1) frame.visuals.forEach((_, j) => checklistKeys.add(video.id + '-visual-' + (frame.checkIndex ?? i) + '-' + j));
   });
 }
 const sync = window.createChecklistSync(checklistKeys, updateChecklist);
@@ -42,11 +42,11 @@ let checked = sync.current();
 
 function updateChecklist(next, status, pending) {
   checked = next;
-  const message = status === 'offline'
-    ? 'Общие отметки недоступны. Изменения сохранены в этом браузере.'
+  const message = status === 'preview' ? 'Предпросмотр · отметки в этом браузере'
+    : status === 'offline' ? 'Общие отметки недоступны. Изменения сохранены в этом браузере.'
     : pending ? 'Сохраняем общие отметки…'
     : status === 'synced' ? 'Общие отметки синхронизированы' : 'Подключаем общие отметки…';
-  syncStatus.dataset.state = pending && status !== 'offline' ? 'connecting' : status;
+  syncStatus.dataset.state = pending && status === 'synced' ? 'connecting' : status;
   if (syncStatus.textContent !== message) syncStatus.textContent = message;
   for (const input of main.querySelectorAll('[data-check]')) input.checked = checked.has(input.dataset.check);
   for (const indicator of main.querySelectorAll('[data-progress]')) {
@@ -78,7 +78,7 @@ function videoCard(video) {
   const index = plan.videos.indexOf(video) + 1;
   const cover = {tifa:0, interview:0, tier:3, photo:1, spoiler:1, night:0}[video.id] ?? 0;
   const image = video.frames[cover].visuals[0].src;
-  const keys = video.frames.map((_, i) => video.id + '-scene-' + i);
+  const keys = video.frames.map((frame, i) => video.id + '-scene-' + (frame.checkIndex ?? i));
   const completed = keys.filter(key => checked.has(key)).length;
   return '<a class="video-card" href="' + route(video.id) + '">' + picture(image, '') +
     '<div><small class="index">' + pad(index) + ' · ' + video.duration + '</small><h3>' + escape(video.title) + '</h3><span class="mono" data-progress="' + keys.join(' ') + '" data-compact="true">' + frameCount(video.frames.length) + ' · <strong>' + completed + '/' + video.frames.length + '</strong> ✓</span></div></a>';
@@ -161,9 +161,9 @@ function sceneCard(video, frame, index) {
   const watchLabel = video.category === 'edit' ? 'Готово' : 'Дубль проверен';
   return '<article class="scene" id="scene-' + index + '"><div class="scene-head"><div class="scene-title"><span class="index">' + pad(index+1) + '</span><div><h3>' +
     escape(sceneName) + '</h3><small class="mono">' + escape(frame.time) + (frame.role ? ' · ' + escape(frame.role) : '') +
-    '</small></div></div>' + checkbox(video.id + '-scene-' + index, watchLabel) + '</div><div class="scene-body"><div class="visual-grid ' +
+    '</small></div></div>' + checkbox(video.id + '-scene-' + (frame.checkIndex ?? index), watchLabel) + '</div><div class="scene-body"><div class="visual-grid ' +
     (frame.visuals.length === 1 ? 'one' : '') + '">' + frame.visuals.map((visual, i) => visualCard(visual,
-      frame.visuals.length > 1 ? video.id + '-visual-' + index + '-' + i : '')).join('') + '</div><details class="scene-details"><summary>' +
+      frame.visuals.length > 1 ? video.id + '-visual-' + (frame.checkIndex ?? index) + '-' + i : '')).join('') + '</div><details class="scene-details"><summary>' +
     (video.category === 'edit' ? 'Текст и монтаж' : 'Действия и реплики') + '</summary><p>' + escape(frame.text) + '</p></details></div></article>';
 }
 function storyboard(video) {
@@ -173,7 +173,7 @@ function storyboard(video) {
   const sceneSelect = '<select class="scene-select" data-jump aria-label="Перейти к сцене"><option value="">Перейти к сцене</option>' +
     frames.map(({frame,index}) => '<option value="' + index + '">' + pad(index+1) + ' · ' + escape(frame.title) + '</option>').join('') + '</select>';
   return '<div class="storybar"><span class="muted">' + frameCount(frames.length) + ' · ' + visualCount(countVisuals(video)) + ' · нажмите на изображение для увеличения</span><div class="actions">' + sort + sceneSelect + '</div>' +
-    '</div>' + progress(frames.map(({index}) => video.id + '-scene-' + index), video.category === 'edit' ? 'Готовые сцены' : 'Проверенные сцены') +
+    '</div>' + progress(frames.map(({frame,index}) => video.id + '-scene-' + (frame.checkIndex ?? index)), video.category === 'edit' ? 'Готовые сцены' : 'Проверенные сцены') +
     '<div class="scenes">' + frames.map(({frame,index}) => sceneCard(video, frame, index)).join('') + '</div>';
 }
 function videoPage(video, tab) {
@@ -187,7 +187,8 @@ function videoPage(video, tab) {
   } else if (tab === 'props') {
     content = propsContent(video) + link('#/props','Весь реквизит');
   } else if (tab === 'script') {
-    const source = video.adapted ? '<p class="muted">Версия для генерации и монтажа.</p>'
+    const source = video.scriptSource ? '<p class="muted">' + escape(video.scriptSource) + '</p>'
+      : video.adapted ? '<p class="muted">Версия для генерации и монтажа.</p>'
       : '<p class="muted">Версия со страницы 07.11. Световые указания на сайте приведены к схеме смены.</p>' + external(video.url, 'Исходный Google Doc');
     content = '<section class="script-wrap"><h2>Текст сценария</h2>' + source + '<div class="script-text">' + escape(video.script) + '</div></section>';
   } else {

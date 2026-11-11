@@ -1,4 +1,5 @@
 (() => {
+  if (['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname)) return;
   const button = document.createElement('button');
   button.type = 'button'; button.className = 'migration-export'; button.textContent = 'Перенести отметки в CRM';
   button.style.cssText = 'padding:10px 14px;border:1px solid #afa0d5;border-radius:12px;background:#fff;color:#55368b;font:inherit;cursor:pointer';
